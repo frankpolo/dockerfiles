@@ -1,0 +1,119 @@
+version: "3.7"
+   
+services:
+    rabbitmq:
+        container_name: rabbitmq
+        hostname: rabbitmq
+        image: rabbitmq:3-management-alpine
+        networks:
+          - main
+        ports:
+            - "5672:5672"
+            - "15672:15672"
+        volumes:
+            - rabbitmq:/var/lib/rabbitmq/
+            - rabbitmq:/var/log/rabbitmq            
+
+        restart: on-failure
+    pgdb:
+        image: postgres
+        container_name: pgdb
+        hostname: pgdb
+        environment:
+            - POSTGRES_DB=postgres
+            - POSTGRES_USER=postgres
+            - POSTGRES_PASSWORD=postgres
+        networks:
+            - main
+        ports:
+            - "5432:5432"
+        restart: on-failure                    
+        volumes:
+            - pgdata:/var/lib/postgresql/data/
+    pgadmin:
+        image: dpage/pgadmin4
+        container_name: pgadmin_container
+        hostname: pgadmin_host
+        depends_on:
+            - pgdb
+        ports:
+            - "5555:80"
+        environment:
+            PGADMIN_DEFAULT_EMAIL: admin@admin.com
+            PGADMIN_DEFAULT_PASSWORD: admin
+        restart: unless-stopped   
+        networks:
+            - main         
+    django:
+        build: .
+        container_name: django_container
+        command: sh -c "python manage.py makemigrations && python manage.py migrate && gunicorn core.wsgi -b 0.0.0.0:8000"
+        volumes:
+            - .:/usr/src/app
+        ports:
+            - "8000:8000"
+        environment:
+            - DEBUG=1
+            - DJANGO_ALLOWED_HOSTS=localhost 127.0.0.1 [::1]
+        networks:
+            - main 
+        hostname: django
+        image: django-image                       
+        depends_on:
+            - pgdb
+            - rabbitmq
+    
+    celery_worker:
+        #build: .
+        container_name: celery_worker_container
+        command: celery -A core worker -l info
+        volumes: 
+            - .:/data1
+        environment:
+            - DEBUG=0
+            - DJANGO_ALLOWED_HOSTS=localhost 127.0.0.1 [::1]
+        networks:
+            - main                        
+        depends_on:
+            - django    
+            - pgdb
+            - rabbitmq
+        deploy:
+            mode: replicated
+            replicas: 1
+            restart_policy:
+                condition: on-failure
+            # resources:
+            #     limits:
+            #         cpus: '0.50'
+            #         memory: 70M
+            #     reservations:
+            #         cpus: '0.25'
+            #         memory: 40M   
+        hostname: celery_worker_host
+        image: django-image 
+        restart: always                    
+
+    celery_beat:
+        #build: .
+        command: celery -A core beat -l info
+        environment:
+            - DEBUG=1
+            - DJANGO_ALLOWED_HOSTS=localhost 127.0.0.1 [::1]
+        networks:
+            - main            
+        depends_on:
+            - django
+            - pgdb
+            - rabbitmq
+        container_name: celery_beat_container       
+        hostname: celery_beat_host
+        image: django-image 
+        restart: on-failure          
+                
+networks:
+    main:       
+        
+volumes:
+    pgdata:
+    rabbitmq:
